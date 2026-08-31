@@ -42,7 +42,8 @@ jobs:
           zip -r GuidedCaptureSample_Unsigned.ipa Payload
 
       - name: Upload IPA Artifact
-        uses: actions/artifacts@v4
+        uses: actions/upload-artifact@v4
         with:
           name: GuidedCaptureSample-Unsigned-IPA
           path: build/GuidedCaptureSample_Unsigned.ipa
+
