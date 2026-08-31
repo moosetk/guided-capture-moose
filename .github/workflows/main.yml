@@ -1,0 +1,48 @@
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch: # 允许你手动点击按钮触发编译
+
+jobs:
+  build:
+    runs-on: macos-15 # 使用支持最新 Xcode 的 macOS 虚拟机
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_16.app # 确保使用支持 iOS 17/18 的 Xcode 16
+
+      - name: Patch Project for Unsigned Build
+        run: |
+          # 关键步骤：修改 Xcode 项目文件，禁用代码签名要求，避免没有付费开发者证书时报错
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' *.xcodeproj/project.pbxproj || true
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' *.xcodeproj/project.pbxproj || true
+          sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]\{10\}//g' *.xcodeproj/project.pbxproj || true
+          
+      - name: Build Archive
+        run: |
+          # 编译生成 Archive 文件，跳过签名验证
+          xcodebuild archive \
+            -project GuidedCaptureSample.xcodeproj \
+            -scheme GuidedCaptureSample \
+            -configuration Release \
+            -archivePath build/GuidedCaptureSample.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package to Unsigned IPA
+        run: |
+          # 将编译出来的 .app 文件夹打包伪装成未签名的 .ipa 文件
+          mkdir -p build/Payload
+          cp -r build/GuidedCaptureSample.xcarchive/Products/Applications/GuidedCaptureSample.app build/Payload/
+          cd build
+          zip -r GuidedCaptureSample_Unsigned.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/artifacts@v4
+        with:
+          name: GuidedCaptureSample-Unsigned-IPA
+          path: build/GuidedCaptureSample_Unsigned.ipa
