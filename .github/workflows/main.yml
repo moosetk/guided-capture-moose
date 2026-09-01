@@ -26,16 +26,19 @@ jobs:
           SCHEME_NAME=$(xcodebuild -project "$XCODEPROJ_PATH" -list | sed -n '/Schemes:/,$p' | sed '1d' | tr -d ' ' | head -n 1)
           echo "SCHEME_NAME=$SCHEME_NAME" >> $GITHUB_ENV
 
-          # 彻底移除证书签名约束
+          # 1. 彻底移除证书签名约束
           sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]\{10\}//g' "$XCODEPROJ_PATH/project.pbxproj" || true
           
-          # 强制降级权能，抹除可能导致不签名中断的配置
+          # 2. 强行把支持的设备卡死在真机 (1,2 代表 iPhone/iPad)，剥离资产目录(actool)对模拟器的额外硬编码校验
+          sed -i '' 's/TARGETED_DEVICE_FAMILY = .*/TARGETED_DEVICE_FAMILY = "1,2";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
+          
+          # 3. 强制降级权能，抹除可能导致不签名中断的配置
           sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' "$XCODEPROJ_PATH/project.pbxproj" || true
           find . -name "*.entitlements" -exec rm -f {} \; || true
           
-          # 覆盖可能阻碍第三方签名的 Bundle ID 为一个通用合规的测试 ID
+          # 4. 覆盖可能阻碍第三方签名的 Bundle ID
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
 
           echo "Deep patch completed."
@@ -47,19 +50,18 @@ jobs:
             -scheme "${{ env.SCHEME_NAME }}" \
             -configuration Release \
             -archivePath build/Output.xcarchive \
+            -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             ONLY_ACTIVE_ARCH=YES \
             ARCHS="arm64" \
-            VALID_ARCHS="arm64" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
-
       - name: Package to Unsigned IPA
-        if: success() # 只有成功才会打包
+        if: success()
         run: |
           mkdir -p build/Payload
           APP_PATH=$(find build/Output.xcarchive/Products/Applications -name "*.app" | head -n 1)
