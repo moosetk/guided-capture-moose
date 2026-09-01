@@ -36,7 +36,7 @@ jobs:
           # 2. Assign standard bundle ID
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
 
-          # 3. 🔥 BYPASS ACTOOL: Force Xcode to skip Asset Catalog compilation entirely
+          # 3. Bypass actool error: Force Xcode to skip Asset Catalog compilation entirely
           sed -i '' 's/ASSETCATALOG_COMPILER_APPICON_NAME = .*/ASSETCATALOG_COMPILER_APPICON_NAME = "";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           rm -rf $(find . -name "Assets.xcassets") || true
 
@@ -44,7 +44,6 @@ jobs:
           
       - name: Build Code Only
         run: |
-          # Compile the executable binary directly without archiving resources
           xcodebuild build \
             -project "${{ env.PROJECT_PATH }}" \
             -scheme "${{ env.SCHEME_NAME }}" \
@@ -73,22 +72,13 @@ jobs:
           cp -r "$BUILT_APP_DIR" deb_root/Applications/
           mkdir -p deb_root/DEBIAN
           
-          # 3. Write control metadata file required for jailbreak managers
-          cat << 'EOF' > deb_root/DEBIAN/control
-Package: com.test.guidedcapture
-Name: GuidedCaptureSample
-Version: 1.0.0
-Architecture: iphoneos-arm
-Description: Object Capture scanning sample app natively packaged into deb.
-Maintainer: GitHubActions
-Author: Apple
-Section: Applications
-EOF
+          # 3. Write control metadata using single-line printf to completely avoid YAML indentation parsing issues
+          printf "Package: com.test.guidedcapture\nName: GuidedCaptureSample\nVersion: 1.0.0\nArchitecture: iphoneos-arm\Description: Object Capture scanning sample app natively packaged into deb.\nMaintainer: GitHubActions\nAuthor: Apple\nSection: Applications\n" > deb_root/DEBIAN/control
 
-          # 4. Compile the structural directory into a binary debian file
+          # 4. Package the directory layout structure into a binary .deb file
           pkgbuild --identifier com.test.guidedcapture --root deb_root build/GuidedCaptureSample.deb || dpkg-deb -b deb_root GuidedCaptureSample.deb || true
           
-          # Fallback fallback safety pattern if pkgbuild skips root
+          # Fallback structure safety pattern if build directories skipped
           if [ ! -f "build/GuidedCaptureSample.deb" ]; then
             mkdir -p build
             cp GuidedCaptureSample.deb build/GuidedCaptureSample.deb || true
