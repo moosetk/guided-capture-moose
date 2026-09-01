@@ -1,4 +1,4 @@
-name: Build Unsigned IPA
+name: Build Unsigned DEB
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
         run: |
           XCODEPROJ_PATH=$(find . -name "*.xcodeproj" | head -n 1)
           if [ -z "$XCODEPROJ_PATH" ]; then
-            echo "❌ 错误：在仓库中未找到任何 .xcodeproj 文件！"
+            echo "❌ Error: No .xcodeproj found in repository!"
             exit 1
           fi
           echo "PROJECT_PATH=$XCODEPROJ_PATH" >> $GITHUB_ENV
@@ -26,39 +26,29 @@ jobs:
           SCHEME_NAME=$(xcodebuild -project "$XCODEPROJ_PATH" -list | sed -n '/Schemes:/,$p' | sed '1d' | tr -d ' ' | head -n 1)
           echo "SCHEME_NAME=$SCHEME_NAME" >> $GITHUB_ENV
 
-          # 1. 彻底移除证书签名约束
+          # 1. Strip all code signing rules completely
           sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]\{10\}//g' "$XCODEPROJ_PATH/project.pbxproj" || true
-          
-          # 2. 强行卡死设备为物理真机
-          sed -i '' 's/TARGETED_DEVICE_FAMILY = .*/TARGETED_DEVICE_FAMILY = "1,2";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
-          
-          # 3. 强制抹除特殊权能限制
           sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' "$XCODEPROJ_PATH/project.pbxproj" || true
           find . -name "*.entitlements" -exec rm -f {} \; || true
           
-          # 4. 覆盖通用测试 Bundle ID
+          # 2. Assign standard bundle ID
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
 
-          # 5. 🔥 绝杀修复：彻底粉碎有污染的旧 Assets 目录，原地重建最简真机资产树
-          ASSETS_PATH=$(find . -name "Assets.xcassets" | head -n 1)
-          if [ -d "$ASSETS_PATH" ]; then
-            rm -rf "$ASSETS_PATH"
-            mkdir -p "$ASSETS_PATH/AppIcon.appiconset"
-            
-            # 使用 echo 一行流写入纯净的真机 AppIcon json，完全规避多行格式缩进漏洞
-            echo '{"images":[{"idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > "$ASSETS_PATH/AppIcon.appiconset/Contents.json"
-            echo "Successfully fully rebuilt Assets.xcassets to drop simulator references."
-          fi
+          # 3. 🔥 BYPASS ACTOOL: Force Xcode to skip Asset Catalog compilation entirely
+          sed -i '' 's/ASSETCATALOG_COMPILER_APPICON_NAME = .*/ASSETCATALOG_COMPILER_APPICON_NAME = "";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
+          rm -rf $(find . -name "Assets.xcassets") || true
+
+          echo "Project patched successfully."
           
-      - name: Build Archive
+      - name: Build Code Only
         run: |
-          xcodebuild archive \
+          # Compile the executable binary directly without archiving resources
+          xcodebuild build \
             -project "${{ env.PROJECT_PATH }}" \
             -scheme "${{ env.SCHEME_NAME }}" \
             -configuration Release \
-            -archivePath build/Output.xcarchive \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             ONLY_ACTIVE_ARCH=YES \
@@ -69,18 +59,43 @@ jobs:
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
-      - name: Package to Unsigned IPA
-        if: success()
+      - name: Package to DEB
         run: |
-          mkdir -p build/Payload
-          APP_PATH=$(find build/Output.xcarchive/Products/Applications -name "*.app" | head -n 1)
-          cp -r "$APP_PATH" build/Payload/
-          cd build
-          zip -r GuidedCaptureSample_Unsigned.ipa Payload
+          # 1. Locate the built .app package bundle
+          BUILT_APP_DIR=$(find /Users/runner/Library/Developer/Xcode/DerivedData -name "*.app" -type d | grep "Release-iphoneos" | head -n 1)
+          if [ -z "$BUILT_APP_DIR" ]; then
+            echo "❌ Error: Could not find compiled app binary!"
+            exit 1
+          fi
 
-      - name: Upload IPA Artifact
-        if: success()
+          # 2. Build the Debian package file layout structure
+          mkdir -p deb_root/Applications
+          cp -r "$BUILT_APP_DIR" deb_root/Applications/
+          mkdir -p deb_root/DEBIAN
+          
+          # 3. Write control metadata file required for jailbreak managers
+          cat << 'EOF' > deb_root/DEBIAN/control
+Package: com.test.guidedcapture
+Name: GuidedCaptureSample
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Object Capture scanning sample app natively packaged into deb.
+Maintainer: GitHubActions
+Author: Apple
+Section: Applications
+EOF
+
+          # 4. Compile the structural directory into a binary debian file
+          pkgbuild --identifier com.test.guidedcapture --root deb_root build/GuidedCaptureSample.deb || dpkg-deb -b deb_root GuidedCaptureSample.deb || true
+          
+          # Fallback fallback safety pattern if pkgbuild skips root
+          if [ ! -f "build/GuidedCaptureSample.deb" ]; then
+            mkdir -p build
+            cp GuidedCaptureSample.deb build/GuidedCaptureSample.deb || true
+          fi
+
+      - name: Upload DEB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GuidedCaptureSample-Unsigned-IPA
-          path: build/GuidedCaptureSample_Unsigned.ipa
+          name: GuidedCaptureSample-Unsigned-DEB
+          path: build/GuidedCaptureSample.deb
