@@ -42,18 +42,21 @@ jobs:
           
       - name: Build Archive
         run: |
-          # 移除多余的并发隐藏参数，强制让编译报错信息打印在最下方的日志输出里
           xcodebuild archive \
             -project "${{ env.PROJECT_PATH }}" \
             -scheme "${{ env.SCHEME_NAME }}" \
             -configuration Release \
             -archivePath build/Output.xcarchive \
             -destination 'generic/platform=iOS' \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS="arm64" \
+            VALID_ARCHS="arm64" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO
+
 
       - name: Package to Unsigned IPA
         if: success() # 只有成功才会打包
