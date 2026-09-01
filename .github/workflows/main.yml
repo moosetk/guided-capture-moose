@@ -41,28 +41,14 @@ jobs:
           # 4. 覆盖通用测试 Bundle ID
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
 
-          # 5. 🔥 绝杀修复：彻底粉碎有污染的旧 Assets 目录，原地重建纯净的真机资产树
+          # 5. 🔥 绝杀修复：彻底粉碎有污染的旧 Assets 目录，原地重建最简真机资产树
           ASSETS_PATH=$(find . -name "Assets.xcassets" | head -n 1)
           if [ -d "$ASSETS_PATH" ]; then
             rm -rf "$ASSETS_PATH"
             mkdir -p "$ASSETS_PATH/AppIcon.appiconset"
             
-            # 创建最基础的、完全符合最新 iOS 真机标准的图标元数据，彻底不给 actool 去寻模拟器的可能
-            cat << 'EOF' > "$ASSETS_PATH/AppIcon.appiconset/Contents.json"
-{
-  "images" : [
-    {
-      "idiom" : "universal",
-      "platform" : "ios",
-      "size" : "1024x1024"
-    }
-  ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  }
-}
-EOF
+            # 使用 echo 一行流写入纯净的真机 AppIcon json，完全规避多行格式缩进漏洞
+            echo '{"images":[{"idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > "$ASSETS_PATH/AppIcon.appiconset/Contents.json"
             echo "Successfully fully rebuilt Assets.xcassets to drop simulator references."
           fi
           
