@@ -14,7 +14,7 @@ jobs:
       - name: Select Xcode version
         run: sudo xcode-select -s /Applications/Xcode_16.app
 
-      - name: Locate and Deep Patch Project
+      - name: Locate and Heavy Patch Project
         run: |
           XCODEPROJ_PATH=$(find . -name "*.xcodeproj" | head -n 1)
           if [ -z "$XCODEPROJ_PATH" ]; then
@@ -31,20 +31,25 @@ jobs:
           sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]\{10\}//g' "$XCODEPROJ_PATH/project.pbxproj" || true
           
-          # 2. 强行把支持的设备卡死在真机 (1,2 代表 iPhone/iPad)，剥离资产目录(actool)对模拟器的额外硬编码校验
+          # 2. 强行卡死设备和架构参数
           sed -i '' 's/TARGETED_DEVICE_FAMILY = .*/TARGETED_DEVICE_FAMILY = "1,2";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           
-          # 3. 强制降级权能，抹除可能导致不签名中断的配置
+          # 3. 强制抹除可能导致不签名中断的配置与 Entitlements
           sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' "$XCODEPROJ_PATH/project.pbxproj" || true
           find . -name "*.entitlements" -exec rm -f {} \; || true
           
-          # 4. 覆盖可能阻碍第三方签名的 Bundle ID
+          # 4. 覆盖通用测试 ID
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
 
-          echo "Deep patch completed."
+          # 5. 🔥 极限修复：清洗 Assets 内部导致 actool 强寻模拟器的干扰配置
+          # 扫描所有 Contents.json，强行移除硬编码指定过低部署目标的 idiomatic 限制或冲突渲染
+          find . -name "Contents.json" -exec sed -i '' 's/"idiom" : "universal"/"idiom" : "iphone"/g' {} \; || true
+          
+          echo "Heavy patch completed."
           
       - name: Build Archive
         run: |
+          # 注入 ASSETCATALOG_COMPILER 限制参数，阻止 actool 导出不必要的切片
           xcodebuild archive \
             -project "${{ env.PROJECT_PATH }}" \
             -scheme "${{ env.SCHEME_NAME }}" \
@@ -58,7 +63,8 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            GCC_TREAT_WARNINGS_AS_ERRORS=NO
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            ASSETCATALOG_COMPILER_FLAGS="--target-device iphone --target-device ipad"
 
       - name: Package to Unsigned IPA
         if: success()
