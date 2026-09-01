@@ -26,17 +26,20 @@ jobs:
           SCHEME_NAME=$(xcodebuild -project "$XCODEPROJ_PATH" -list | sed -n '/Schemes:/,$p' | sed '1d' | tr -d ' ' | head -n 1)
           echo "SCHEME_NAME=$SCHEME_NAME" >> $GITHUB_ENV
 
-          # 1. Strip all code signing rules completely
+          # 1. 彻底移除证书签名约束
           sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]\{10\}//g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' "$XCODEPROJ_PATH/project.pbxproj" || true
           find . -name "*.entitlements" -exec rm -f {} \; || true
           
-          # 2. Assign standard bundle ID
+          # 2. 强行卡死设备为物理真机
+          sed -i '' 's/TARGETED_DEVICE_FAMILY = .*/TARGETED_DEVICE_FAMILY = "1,2";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
+          
+          # 3. 覆盖通用测试 Bundle ID
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
 
-          # 3. Bypass actool error: Force Xcode to skip Asset Catalog compilation entirely
+          # 4. 彻底切断 Asset 模拟器校验报错 bug
           sed -i '' 's/ASSETCATALOG_COMPILER_APPICON_NAME = .*/ASSETCATALOG_COMPILER_APPICON_NAME = "";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           rm -rf $(find . -name "Assets.xcassets") || true
 
@@ -58,31 +61,42 @@ jobs:
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
-      - name: Package to DEB
+      - name: Manual Package to Standard Jailbreak DEB
         run: |
-          # 1. Locate the built .app package bundle
+          # 1. 寻找之前顺利通过编译的 .app 真实路径
           BUILT_APP_DIR=$(find /Users/runner/Library/Developer/Xcode/DerivedData -name "*.app" -type d | grep "Release-iphoneos" | head -n 1)
           if [ -z "$BUILT_APP_DIR" ]; then
             echo "❌ Error: Could not find compiled app binary!"
             exit 1
           fi
 
-          # 2. Build the Debian package file layout structure
-          mkdir -p deb_root/Applications
-          cp -r "$BUILT_APP_DIR" deb_root/Applications/
-          mkdir -p deb_root/DEBIAN
+          # 2. 建立标准的越狱应用 deb 安装目录结构 (必须全部放到 /Applications 目录下)
+          mkdir -p deb_working/Applications
+          cp -r "$BUILT_APP_DIR" deb_working/Applications/
           
-          # 3. Write control metadata using single-line printf to completely avoid YAML indentation parsing issues
-          printf "Package: com.test.guidedcapture\nName: GuidedCaptureSample\nVersion: 1.0.0\nArchitecture: iphoneos-arm\Description: Object Capture scanning sample app natively packaged into deb.\nMaintainer: GitHubActions\nAuthor: Apple\nSection: Applications\n" > deb_root/DEBIAN/control
+          # 3. 创建标准控制元数据文件
+          mkdir -p deb_working/DEBIAN
+          printf "Package: com.test.guidedcapture\nName: GuidedCaptureSample\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDescription: Object Capture scanning sample app natively packaged into deb.\nMaintainer: GitHubActions\nAuthor: Apple\nSection: Applications\n" > deb_working/DEBIAN/control
 
-          # 4. Package the directory layout structure into a binary .deb file
-          pkgbuild --identifier com.test.guidedcapture --root deb_root build/GuidedCaptureSample.deb || dpkg-deb -b deb_root GuidedCaptureSample.deb || true
+          # 4. 🔥 针对 macOS 的原生打包魔改：用 tar 手动压制 control 和 data 切片
+          mkdir -p output_deb
+          cd deb_working
           
-          # Fallback structure safety pattern if build directories skipped
-          if [ ! -f "build/GuidedCaptureSample.deb" ]; then
-            mkdir -p build
-            cp GuidedCaptureSample.deb build/GuidedCaptureSample.deb || true
-          fi
+          # 压缩控制信息和程序数据，格式卡死在越狱管理器（Cydia/Sileo/Filza）能识别的旧版 gzip 格式上
+          tar -czf ../output_deb/control.tar.gz -C DEBIAN control
+          tar -czf ../output_deb/data.tar.gz -C . Applications
+          
+          cd ../output_deb
+          echo "2.0" > debian-binary
+          
+          # 用 ar 命令把这三个切片封装成一个纯正的标准 .deb 越狱包
+          ar -q GuidedCaptureSample.deb debian-binary control.tar.gz data.tar.gz
+          
+          # 5. 转移结果到项目根目录下，防止打包工具找不到路径
+          cd ..
+          mkdir -p build
+          cp output_deb/GuidedCaptureSample.deb build/GuidedCaptureSample.deb
+          echo "✅ DEB package successfully handcrafted at build/GuidedCaptureSample.deb"
 
       - name: Upload DEB Artifact
         uses: actions/upload-artifact@v4
