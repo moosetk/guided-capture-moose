@@ -42,7 +42,7 @@ jobs:
           
       - name: Build Archive
         run: |
-          # 注入额外的兼容参数：不处理特权文件，且不把编译警告当作错误
+          # 移除多余的并发隐藏参数，强制让编译报错信息打印在最下方的日志输出里
           xcodebuild archive \
             -project "${{ env.PROJECT_PATH }}" \
             -scheme "${{ env.SCHEME_NAME }}" \
@@ -52,11 +52,11 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            COMPILER_INDEX_STORE_ENABLE=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
       - name: Package to Unsigned IPA
+        if: success() # 只有成功才会打包
         run: |
           mkdir -p build/Payload
           APP_PATH=$(find build/Output.xcarchive/Products/Applications -name "*.app" | head -n 1)
@@ -65,6 +65,7 @@ jobs:
           zip -r GuidedCaptureSample_Unsigned.ipa Payload
 
       - name: Upload IPA Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: GuidedCaptureSample-Unsigned-IPA
