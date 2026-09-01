@@ -31,25 +31,43 @@ jobs:
           sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]\{10\}//g' "$XCODEPROJ_PATH/project.pbxproj" || true
           
-          # 2. 强行卡死设备和架构参数
+          # 2. 强行卡死设备为物理真机
           sed -i '' 's/TARGETED_DEVICE_FAMILY = .*/TARGETED_DEVICE_FAMILY = "1,2";/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           
-          # 3. 强制抹除可能导致不签名中断的配置与 Entitlements
+          # 3. 强制抹除特殊权能限制
           sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' "$XCODEPROJ_PATH/project.pbxproj" || true
           find . -name "*.entitlements" -exec rm -f {} \; || true
           
-          # 4. 覆盖通用测试 ID
+          # 4. 覆盖通用测试 Bundle ID
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
 
-          # 5. 🔥 极限修复：清洗 Assets 内部导致 actool 强寻模拟器的干扰配置
-          # 扫描所有 Contents.json，强行移除硬编码指定过低部署目标的 idiomatic 限制或冲突渲染
-          find . -name "Contents.json" -exec sed -i '' 's/"idiom" : "universal"/"idiom" : "iphone"/g' {} \; || true
-          
-          echo "Heavy patch completed."
+          # 5. 🔥 绝杀修复：彻底粉碎有污染的旧 Assets 目录，原地重建纯净的真机资产树
+          ASSETS_PATH=$(find . -name "Assets.xcassets" | head -n 1)
+          if [ -d "$ASSETS_PATH" ]; then
+            rm -rf "$ASSETS_PATH"
+            mkdir -p "$ASSETS_PATH/AppIcon.appiconset"
+            
+            # 创建最基础的、完全符合最新 iOS 真机标准的图标元数据，彻底不给 actool 去寻模拟器的可能
+            cat << 'EOF' > "$ASSETS_PATH/AppIcon.appiconset/Contents.json"
+{
+  "images" : [
+    {
+      "idiom" : "universal",
+      "platform" : "ios",
+      "size" : "1024x1024"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+EOF
+            echo "Successfully fully rebuilt Assets.xcassets to drop simulator references."
+          fi
           
       - name: Build Archive
         run: |
-          # 注入 ASSETCATALOG_COMPILER 限制参数，阻止 actool 导出不必要的切片
           xcodebuild archive \
             -project "${{ env.PROJECT_PATH }}" \
             -scheme "${{ env.SCHEME_NAME }}" \
@@ -63,8 +81,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-            ASSETCATALOG_COMPILER_FLAGS="--target-device iphone --target-device ipad"
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
       - name: Package to Unsigned IPA
         if: success()
