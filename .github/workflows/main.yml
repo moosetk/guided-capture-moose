@@ -14,9 +14,8 @@ jobs:
       - name: Select Xcode version
         run: sudo xcode-select -s /Applications/Xcode_16.app
 
-      - name: Locate and Patch Project
+      - name: Locate and Deep Patch Project
         run: |
-          # 1. 自动寻找项目文件的实际路径
           XCODEPROJ_PATH=$(find . -name "*.xcodeproj" | head -n 1)
           if [ -z "$XCODEPROJ_PATH" ]; then
             echo "❌ 错误：在仓库中未找到任何 .xcodeproj 文件！"
@@ -24,35 +23,41 @@ jobs:
           fi
           echo "PROJECT_PATH=$XCODEPROJ_PATH" >> $GITHUB_ENV
           
-          # 2. 获取实际的 Scheme 名称
           SCHEME_NAME=$(xcodebuild -project "$XCODEPROJ_PATH" -list | sed -n '/Schemes:/,$p' | sed '1d' | tr -d ' ' | head -n 1)
           echo "SCHEME_NAME=$SCHEME_NAME" >> $GITHUB_ENV
 
-          # 3. 彻底抹除签名和证书要求
+          # 彻底移除证书签名约束
           sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/CODE_SIGN_STYLE = Automatic/CODE_SIGN_STYLE = Manual/g' "$XCODEPROJ_PATH/project.pbxproj" || true
           sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]\{10\}//g' "$XCODEPROJ_PATH/project.pbxproj" || true
           
-          # 4. 🔥 核心修复：强行移除可能会阻止未签名编译的 Entitlements 描述文件关联
+          # 强制降级权能，抹除可能导致不签名中断的配置
           sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' "$XCODEPROJ_PATH/project.pbxproj" || true
           find . -name "*.entitlements" -exec rm -f {} \; || true
           
-          echo "Successfully patched project and stripped entitlements."
+          # 覆盖可能阻碍第三方签名的 Bundle ID 为一个通用合规的测试 ID
+          sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*/PRODUCT_BUNDLE_IDENTIFIER = com.test.guidedcapture;/g' "$XCODEPROJ_PATH/project.pbxproj" || true
+
+          echo "Deep patch completed."
           
       - name: Build Archive
         run: |
+          # 注入额外的兼容参数：不处理特权文件，且不把编译警告当作错误
           xcodebuild archive \
             -project "${{ env.PROJECT_PATH }}" \
             -scheme "${{ env.SCHEME_NAME }}" \
             -configuration Release \
             -archivePath build/Output.xcarchive \
+            -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
       - name: Package to Unsigned IPA
         run: |
-          # 自动寻找编译出的 .app 文件夹路径并打包
           mkdir -p build/Payload
           APP_PATH=$(find build/Output.xcarchive/Products/Applications -name "*.app" | head -n 1)
           cp -r "$APP_PATH" build/Payload/
